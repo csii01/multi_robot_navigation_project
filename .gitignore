@@ -1,0 +1,16 @@
+# Python szemetek
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Fejlesztői környezetek (IDE)
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS fájlok
+.DS_Store
+Thumbs.db
