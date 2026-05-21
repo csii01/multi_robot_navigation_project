@@ -9,3 +9,19 @@
 **Then in a separate terminal window:**
 
 ```ros2 run multi_robot_explore explore_map2```
+## Python dependency
+I'm not sure, but if stuff isn't working out for you, you could try installing the Python package shapely.
+
+First make sure that your system is up-to-date:
+
+```sudo apt update```
+
+If it is needed, you can upgrade:
+
+```sudo apt upgrade```
+
+Then install dependency:
+
+```sudo apt install python3-shapely```
+
+Don't forget to build (```colcon build```) and source the bash file (```source install/setup.bash```)!
