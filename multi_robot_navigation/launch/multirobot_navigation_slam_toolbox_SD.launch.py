@@ -26,17 +26,16 @@ def append_gz_sim_resource_path(path):
     else:
         os.environ["GZ_SIM_RESOURCE_PATH"] = path
 
-
 def generate_launch_description():
 
 
-    robot_1 = {'name': 'robot_1',
+    robot_1 = {'name': 'SD robot',
                'x': -4.5,
                'y': 4.2,
                'yaw': 1.5708}
     robot_1['quaternion'] = quaternion_from_euler(0.0, 0.0, robot_1['yaw'])
 
-    robot_2 = {'name': 'robot_2',
+    robot_2 = {'name': 'Másik robot',
                'x': 2.4,
                'y': -6.0,
                'yaw': 2.3562}
