@@ -12,7 +12,13 @@ import math
 import threading
 import tf_transformations
 import time
-from shapely.geometry import Polygon, Point
+try:
+    from shapely.geometry import Polygon, Point
+    HAVE_SHAPELY = True
+except ImportError:
+    Polygon = None
+    Point = None
+    HAVE_SHAPELY = False
 
 class MultiRobotMapMerger(Node):
     def __init__(self):
@@ -30,6 +36,10 @@ class MultiRobotMapMerger(Node):
         self.confidence_threshold = self.get_parameter('match_confidence_threshold').get_parameter_value().double_value
         self.min_map_size = self.get_parameter('min_map_size').get_parameter_value().integer_value
         self.use_sim_time = self.get_parameter('use_sim_time').get_parameter_value().bool_value
+        self.shapely_available = HAVE_SHAPELY
+
+        if not self.shapely_available:
+            self.get_logger().warn('shapely is not installed; map merging will run in degraded mode with fallback layout only. Install shapely to enable full merge functionality.')
 
         self.add_on_set_parameters_callback(self.update_parameter_callback)
 
@@ -185,40 +195,44 @@ class MultiRobotMapMerger(Node):
                     self.get_logger().info("Transform estimation failed.")
                 
                 else:
-                    # Warp img2 corners into img1 frame to get estimated overlap polygon
-                    h1, w1 = img1.shape[:2]
-                    h2, w2 = img2.shape[:2]
-
-                    map1_size = h1*w1
-                    map2_size = h2*w2
-
-                    corners2 = np.array([[0, 0], [w2, 0], [w2, h2], [0, h2]], dtype=np.float32).reshape(-1, 1, 2)
-                    warped_corners = cv2.transform(corners2, M)  # 4x1x2
-                    polygon = Polygon(warped_corners.reshape(-1, 2))
-                    
-                    # Count how many inlier points in kp1 lie inside the polygon
-                    overlap_inlier_count = 0
-                    for i, m in enumerate(good_matches):
-                        if inliers[i]:
-                            pt = kp1[m.queryIdx].pt
-                            if polygon.contains(Point(pt)):
-                                overlap_inlier_count += 1
-
-                    # Count how many total keypoints from img1 fall in the polygon
-                    kp1_pts = np.array([kp.pt for kp in kp1])
-                    overlap_kp_count = sum(polygon.contains(Point(p)) for p in kp1_pts)
-
-                    # Compute overlap-normalized confidence
-                    if overlap_kp_count > 0:
-                        confidence = overlap_inlier_count / overlap_kp_count
+                    if not self.shapely_available:
+                        confidence = 0.0
+                        self.get_logger().warn('shapely is unavailable; using fallback map layout only.')
                     else:
-                        confidence = 0.0
+                        # Warp img2 corners into img1 frame to get estimated overlap polygon
+                        h1, w1 = img1.shape[:2]
+                        h2, w2 = img2.shape[:2]
 
-                    self.get_logger().info(f"Confidence: {confidence:.2f}, Inliers: {overlap_inlier_count}, Overlap keypoints: {overlap_kp_count}, Map 1 size: {img1.shape}, Map 2 size: {img2.shape}")
-                    if map1_size < self.min_map_size or map2_size < self.min_map_size:
-                        confidence = 0.0
-                        self.get_logger().info("One of the maps is too small, confidence set to 0.0")
-                        self.get_logger().info(f"Map 1 size: {map1_size}, Map 2 size: {map2_size}, Min size: {self.min_map_size}")
+                        map1_size = h1*w1
+                        map2_size = h2*w2
+
+                        corners2 = np.array([[0, 0], [w2, 0], [w2, h2], [0, h2]], dtype=np.float32).reshape(-1, 1, 2)
+                        warped_corners = cv2.transform(corners2, M)  # 4x1x2
+                        polygon = Polygon(warped_corners.reshape(-1, 2))
+                        
+                        # Count how many inlier points in kp1 lie inside the polygon
+                        overlap_inlier_count = 0
+                        for i, m in enumerate(good_matches):
+                            if inliers[i]:
+                                pt = kp1[m.queryIdx].pt
+                                if polygon.contains(Point(pt)):
+                                    overlap_inlier_count += 1
+
+                        # Count how many total keypoints from img1 fall in the polygon
+                        kp1_pts = np.array([kp.pt for kp in kp1])
+                        overlap_kp_count = sum(polygon.contains(Point(p)) for p in kp1_pts)
+
+                        # Compute overlap-normalized confidence
+                        if overlap_kp_count > 0:
+                            confidence = overlap_inlier_count / overlap_kp_count
+                        else:
+                            confidence = 0.0
+
+                        self.get_logger().info(f"Confidence: {confidence:.2f}, Inliers: {overlap_inlier_count}, Overlap keypoints: {overlap_kp_count}, Map 1 size: {img1.shape}, Map 2 size: {img2.shape}")
+                        if map1_size < self.min_map_size or map2_size < self.min_map_size:
+                            confidence = 0.0
+                            self.get_logger().info("One of the maps is too small, confidence set to 0.0")
+                            self.get_logger().info(f"Map 1 size: {map1_size}, Map 2 size: {map2_size}, Min size: {self.min_map_size}")
             
         else:
             confidence = 0.0

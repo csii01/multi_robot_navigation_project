@@ -9,6 +9,17 @@ import random
 import tempfile
 from tf_transformations import quaternion_from_euler
 
+
+def append_gz_sim_resource_path(path):
+    existing_path = os.environ.get('GZ_SIM_RESOURCE_PATH', '')
+    if existing_path:
+        paths = existing_path.split(os.pathsep)
+        if path not in paths:
+            os.environ['GZ_SIM_RESOURCE_PATH'] = existing_path + os.pathsep + path
+    else:
+        os.environ['GZ_SIM_RESOURCE_PATH'] = path
+
+
 def patch_and_launch_nodes(context, *args, **kwargs):
 
     robot_name = LaunchConfiguration('name').perform(context)
@@ -105,7 +116,7 @@ def generate_launch_description():
     pkg_multi_robot_navigation = get_package_share_directory('multi_robot_navigation')
 
     gazebo_models_path, ignore_last_dir = os.path.split(pkg_multi_robot_navigation)
-    os.environ["GZ_SIM_RESOURCE_PATH"] += os.pathsep + gazebo_models_path
+    append_gz_sim_resource_path(gazebo_models_path)
 
     name_arg = DeclareLaunchArgument(
         'name', default_value='robot_1',
@@ -179,9 +190,9 @@ def generate_launch_description():
         namespace=LaunchConfiguration('name'),
         output='screen',
         parameters=[
-            {'frame_prefix': PythonExpression(["'", LaunchConfiguration('name'), "/'"]),
+            {'frame_prefix': PythonExpression(["'", LaunchConfiguration('name'), "' + '/'"]),
              'robot_description': robot_description_content,
-             'use_sim_time': LaunchConfiguration('use_sim_time')},
+            'use_sim_time': LaunchConfiguration('use_sim_time')},
         ]
     )
 

@@ -7,6 +7,17 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, Text
 from launch_ros.actions import Node
 from launch.conditions import IfCondition
 
+def append_gz_sim_resource_path(path):
+    if not path:
+        return
+    if not os.path.isdir(path):
+        return
+    current = os.environ.get("GZ_SIM_RESOURCE_PATH", "")
+    if current:
+        os.environ["GZ_SIM_RESOURCE_PATH"] = current + os.pathsep + path
+    else:
+        os.environ["GZ_SIM_RESOURCE_PATH"] = path
+
 def generate_launch_description():
 
     rviz_launch_arg = DeclareLaunchArgument(
@@ -33,10 +44,10 @@ def generate_launch_description():
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
     # Add your own gazebo library path here
-    gazebo_models_path = "/home/david/gazebo_models"
-    os.environ["GZ_SIM_RESOURCE_PATH"] += os.pathsep + gazebo_models_path
+    gazebo_models_path = os.path.expanduser("~/gazebo_models")
+    append_gz_sim_resource_path(gazebo_models_path)
     gazebo_models_path, ignore_last_dir = os.path.split(pkg_multi_robot_navigation)
-    os.environ["GZ_SIM_RESOURCE_PATH"] += os.pathsep + gazebo_models_path
+    append_gz_sim_resource_path(gazebo_models_path)
 
     gazebo_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -47,8 +58,8 @@ def generate_launch_description():
             'worlds',
             LaunchConfiguration('world')
         ]),
-        TextSubstitution(text=' -r -v -v4')],
-        #TextSubstitution(text=' -r -v -v1 --render-engine ogre --render-engine-gui-api-backend opengl')],
+        #TextSubstitution(text=' -r -v -v4')],
+        TextSubstitution(text=' -r -v -v1 --render-engine ogre --render-engine-gui-api-backend opengl')],
         'on_exit_shutdown': 'true'}.items()
     )
 
@@ -72,7 +83,8 @@ def generate_launch_description():
         arguments=['-d', PathJoinSubstitution([pkg_multi_robot_navigation, 'rviz', LaunchConfiguration('rviz_config')])],
         condition=IfCondition(LaunchConfiguration('rviz')),
         parameters=[
-            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+            #{'use_sim_time': LaunchConfiguration('use_sim_time')}, # ez a régi
+            {'use_sim_time': True},
         ]
     )
 
