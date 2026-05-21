@@ -1,13 +1,13 @@
 import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import LifecycleNode
-from launch.actions import (DeclareLaunchArgument, EmitEvent, LogInfo,
-                            RegisterEventHandler)
+from launch.actions import (DeclareLaunchArgument, EmitEvent, LogInfo, RegisterEventHandler)
 from launch_ros.event_handlers import OnStateTransition
 from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.events.lifecycle import ChangeState
@@ -31,14 +31,14 @@ def generate_launch_description():
 
 
     robot_1 = {'name': 'robot_1',
-               'x': -4.5,
-               'y': 4.2,
+               'x': -0.57,
+               'y': 2.19,
                'yaw': 1.5708}
     robot_1['quaternion'] = quaternion_from_euler(0.0, 0.0, robot_1['yaw'])
 
     robot_2 = {'name': 'robot_2',
-               'x': 2.4,
-               'y': -6.0,
+               'x': 2.42,
+               'y': 2.39,
                'yaw': 2.3562}
     robot_2['quaternion'] = quaternion_from_euler(0.0, 0.0, robot_2['yaw'])
 
@@ -352,8 +352,12 @@ def generate_launch_description():
     launchDescriptionObject.add_action(static_tf_arg)
     launchDescriptionObject.add_action(world_arg)
     launchDescriptionObject.add_action(world_launch)
-    launchDescriptionObject.add_action(robot_1_spawn_launch)
-    launchDescriptionObject.add_action(robot_2_spawn_launch)
+    launchDescriptionObject.add_action(
+        TimerAction(period=8.0, actions=[robot_1_spawn_launch])
+    )
+    launchDescriptionObject.add_action(
+        TimerAction(period=6.0, actions=[robot_2_spawn_launch])
+    )
     launchDescriptionObject.add_action(rviz_node)
     launchDescriptionObject.add_action(static_world_transform_1)
     launchDescriptionObject.add_action(static_world_transform_2)
