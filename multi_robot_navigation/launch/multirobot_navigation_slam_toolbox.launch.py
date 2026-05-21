@@ -15,6 +15,18 @@ from lifecycle_msgs.msg import Transition
 from launch.events import matches_action
 from tf_transformations import quaternion_from_euler
 
+def append_gz_sim_resource_path(path):
+    if not path:
+        return
+    if not os.path.isdir(path):
+        return
+    current = os.environ.get("GZ_SIM_RESOURCE_PATH", "")
+    if current:
+        os.environ["GZ_SIM_RESOURCE_PATH"] = current + os.pathsep + path
+    else:
+        os.environ["GZ_SIM_RESOURCE_PATH"] = path
+
+
 def generate_launch_description():
 
 
@@ -35,12 +47,12 @@ def generate_launch_description():
     #pkg_aws_robomaker_world = get_package_share_directory('aws_robomaker_small_house_world')
 
     # Add your own gazebo library path here
-    gazebo_models_path = "/home/david/gazebo_models"
-    os.environ["GZ_SIM_RESOURCE_PATH"] += os.pathsep + gazebo_models_path
+    gazebo_models_path = os.path.expanduser("~/gazebo_models")
+    append_gz_sim_resource_path(gazebo_models_path)
     gazebo_models_path, ignore_last_dir = os.path.split(pkg_multi_robot_navigation)
-    os.environ["GZ_SIM_RESOURCE_PATH"] += os.pathsep + gazebo_models_path
+    append_gz_sim_resource_path(gazebo_models_path)
     #gazebo_models_path, ignore_last_dir = os.path.split(pkg_aws_robomaker_world)
-    #os.environ["GZ_SIM_RESOURCE_PATH"] += os.pathsep + gazebo_models_path
+    #append_gz_sim_resource_path(gazebo_models_path)
 
     rviz_config_arg = DeclareLaunchArgument(
         'rviz_config', default_value='navigation.rviz',
