@@ -265,7 +265,12 @@ class MultiRobotExplorer(Node):
         hash_object = hashlib.sha256(robot_name.encode('utf-8'))
         hash_hex = hash_object.hexdigest()
         hash_int = int(hash_hex[:8], 16)
-        marker.color = colorsys.hsv_to_rgb(hash_int, 0.8, 0.8)
+        hue = (hash_int) % 360
+        r, g, b = colorsys.hsv_to_rgb(hue/360.0, 0.8, 0.8)
+
+        marker.color.r = r
+        marker.color.g = g
+        marker.color.b = b
         
         marker.color.a = 1.0
         marker.lifetime = Duration(sec=2)
@@ -290,7 +295,7 @@ class MultiRobotExplorer(Node):
 
         try:
             transforms = {}
-            for name, frame in self.robot_frames:
+            for name, frame in self.robot_frames.items():
                 transforms[name] = self.tf_buffer.lookup_transform(
                 'world', frame, rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.1))
         except Exception as e:
