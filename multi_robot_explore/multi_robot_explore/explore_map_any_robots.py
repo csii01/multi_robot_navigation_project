@@ -12,6 +12,7 @@ from geometry_msgs.msg import PoseStamped, Point
 from builtin_interfaces.msg import Duration
 from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_pose
 from tf2_ros import Buffer, TransformListener
+from std_msgs.msg import ColorRGBA
 #from bitbots_tf_buffer import Buffer
 
 
@@ -43,6 +44,7 @@ class MultiRobotExplorer(Node):
         self.current_targets = {}
         self.target_start_times = {}
         self.blacklists = {}
+        self.robot_marker_colors = {}
 
         # Add timer to fire the scanning procedure for new robots periodically
         self.robot_scan_period_sec = 10.0
@@ -71,6 +73,22 @@ class MultiRobotExplorer(Node):
                 self.current_targets[name] = None
                 self.target_start_times[name] = None
                 self.blacklists[name] = set()
+
+                # Robot specific color for markers:
+                # we hash the robot name to get a unique but consistent color hue
+                color_rgba = ColorRGBA()
+                hash_object = hashlib.sha256(name.encode('utf-8'))
+                hash_hex = hash_object.hexdigest()
+                hash_int = int(hash_hex[:8], 16)
+                hue = (hash_int) % 360
+                r, g, b = colorsys.hsv_to_rgb(hue/360.0, 0.8, 0.8)
+
+                color_rgba.r = r
+                color_rgba.g = g
+                color_rgba.b = b
+        
+                color_rgba.a = 1.0
+                self.robot_marker_colors[name] = color_rgba
                 self.get_logger().info(f"New robot found '{name}' found, added to dictionaries")
 
     def update_parameter_callback(self, params):
@@ -260,19 +278,7 @@ class MultiRobotExplorer(Node):
         marker.scale.y = 0.4
         marker.scale.z = 0.4
 
-        # Robot specific color for markers:
-        # we hash the robot name to get a unique but consistent color hue
-        hash_object = hashlib.sha256(robot_name.encode('utf-8'))
-        hash_hex = hash_object.hexdigest()
-        hash_int = int(hash_hex[:8], 16)
-        hue = (hash_int) % 360
-        r, g, b = colorsys.hsv_to_rgb(hue/360.0, 0.8, 0.8)
-
-        marker.color.r = r
-        marker.color.g = g
-        marker.color.b = b
-        
-        marker.color.a = 1.0
+        marker.color = self.robot_marker_colors[robot_name]
         marker.lifetime = Duration(sec=2)
 
         resolution = map_msg.info.resolution
@@ -328,7 +334,7 @@ class MultiRobotExplorer(Node):
                 tx = origin.x + (x + 0.5) * resolution
                 ty = origin.y + (y + 0.5) * resolution
 
-                if np.hypot(tx - rx, ty - ry) < 1.0:
+                if np.hypot(tx - rx, ty - ry) < 5.0:
                     self.get_logger().warn(f"Blacklisting unreachable frontier for {robot} at ({y}, {x})")
 
                     try:
