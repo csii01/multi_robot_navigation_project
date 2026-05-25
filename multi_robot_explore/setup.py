@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'explore_map = multi_robot_explore.explore_map:main',
             'explore_map2 = multi_robot_explore.explore_map2:main',
+            'explore_map_any_robots = multi_robot_explore.explore_map_any_robots:main',
         ],
     },
 )
