@@ -1,7 +1,5 @@
 import hashlib
-
 from shapely import node
-
 import rclpy
 import colorsys
 from rclpy.node import Node
@@ -13,10 +11,9 @@ from builtin_interfaces.msg import Duration
 from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_pose
 from tf2_ros import Buffer, TransformListener
 from std_msgs.msg import ColorRGBA
-#from bitbots_tf_buffer import Buffer
-
-
 import numpy as np
+
+from nav2_msgs.srv import ClearEntireCostmap
 
 class MultiRobotExplorer(Node):
     def __init__(self):
@@ -25,7 +22,6 @@ class MultiRobotExplorer(Node):
         self.declare_parameter('min_unknown_cells', 12)
         self.min_unknown_cells = self.get_parameter('min_unknown_cells').get_parameter_value().integer_value
         
-        # TODO: has to be fixed, it forces use_sim_time to True
         self.set_parameters([rclpy.parameter.Parameter('use_sim_time', rclpy.Parameter.Type.BOOL, True)])
         self.use_sim_time = self.get_parameter('use_sim_time').get_parameter_value().bool_value
 
@@ -43,39 +39,32 @@ class MultiRobotExplorer(Node):
 
         self.current_targets = {}
         self.target_start_times = {}
-        self.blacklists = {}
+        self.blacklists = {}  # EREDETI: Ez a dict tárolja a feketelistát
         self.robot_marker_colors = {}
 
-        # Add timer to fire the scanning procedure for new robots periodically
         self.robot_scan_period_sec = 10.0
         self.timer = self.create_timer(self.robot_scan_period_sec, self.scan_for_active_robots)
 
     def scan_for_active_robots(self):
-        # Temporary node for scanning
         node = rclpy.create_node('robot_scanner')
-    
-        # Query for all topics and their types
         topic_list = node.get_topic_names_and_types()
-
-        # Search for the topics that end with '/robot_description', and get the robot namespace
         map_topics = [name for name, types in topic_list if name.endswith('/robot_description')]
         robot_names = [t.split('/')[1] for t in map_topics if len(t.split('/')) > 2]
-
         node.destroy_node()
         self.update_robot_lists(robot_names)
     
     def update_robot_lists(self, robot_names):
-        # We get a list of robot names, if new ones appear, we add them to the dictionaries
         for name in robot_names:
             if name not in self.robot_frames:
                 self.robot_frames[name] = f"{name}/base_link"
                 self.goal_pubs[name] = self.create_publisher(PoseStamped, f'/{name}/goal_pose', 10)
                 self.current_targets[name] = None
                 self.target_start_times[name] = None
-                self.blacklists[name] = set()
+                
+                # MÓDOSÍTÁS 1: Halmaz (set) helyett egy szótárt (dict) hozunk létre a robotnak.
+                # Ebben fogjuk tárolni a (y, x) koordinátákat és a hozzájuk tartozó időbélyeget.
+                self.blacklists[name] = {}  
 
-                # Robot specific color for markers:
-                # we hash the robot name to get a unique but consistent color hue
                 color_rgba = ColorRGBA()
                 hash_object = hashlib.sha256(name.encode('utf-8'))
                 hash_hex = hash_object.hexdigest()
@@ -86,7 +75,6 @@ class MultiRobotExplorer(Node):
                 color_rgba.r = r
                 color_rgba.g = g
                 color_rgba.b = b
-        
                 color_rgba.a = 1.0
                 self.robot_marker_colors[name] = color_rgba
                 self.get_logger().info(f"New robot found '{name}' found, added to dictionaries")
@@ -100,9 +88,20 @@ class MultiRobotExplorer(Node):
                 return result
         return result
 
+    # MÓDOSÍTÁS 2: Új függvény a feketelista tisztítására.
+    def clean_expired_blacklists(self):
+        now = self.get_clock().now().nanoseconds / 1e9
+        for robot in self.blacklists:
+            # Összegyűjtjük azokat a cellákat, amik régebben kerültek be, mint 60 másodperc
+            expired_cells = [cell for cell, timestamp in self.blacklists[robot].items() if now - timestamp > 60.0]
+            # Töröljük őket a szótárból
+            for cell in expired_cells:
+                del self.blacklists[robot][cell]
+                self.get_logger().info(f"[{robot}] Elfelejtettük a régi feketelistás pontot: {cell}")
+    # --------------------------------------------------------
+
     def get_home_pose(self, map_msg, robot_name):
         try:
-            # 0,0 in robot_x/map
             map_frame = f"{robot_name}/map"
             pose_in_map = PoseStamped()
             pose_in_map.header.frame_id = map_frame
@@ -117,7 +116,6 @@ class MultiRobotExplorer(Node):
             )
             pose_world = do_transform_pose(pose_in_map.pose, transform)
 
-            # Convert world pose to global map cell
             resolution = map_msg.info.resolution
             origin = map_msg.info.origin.position
             x = int((pose_world.position.x - origin.x) / resolution)
@@ -164,7 +162,8 @@ class MultiRobotExplorer(Node):
             frame = f"{robot}/map"
             try:
                 transform = transforms[robot]
-                for y, x in blacklist:
+                # MÓDOSÍTÁS 3: Mivel a blacklist már szótár (dict), a keys() metódust kell hívni
+                for y, x in blacklist.keys(): 
                     local_x = origin.x + (x + 0.5) * resolution
                     local_y = origin.y + (y + 0.5) * resolution
                     pose = PoseStamped()
@@ -209,11 +208,13 @@ class MultiRobotExplorer(Node):
         self.marker_pub.publish(marker_array)
 
     def map_callback(self, msg):
-
+        # MÓDOSÍTÁS 4: Minden térképfrissítésnél meghívjuk a feketelista takarítóját
+        self.clean_expired_blacklists() 
+        
         self.check_and_blacklist_stuck_targets(msg)
         self.global_map = msg
         frontiers = self.find_frontiers(msg)
-        # filter out blacklisted frontiers in world frame
+        
         blacklist_points = self.transform_blacklists_to_world(msg)
         self.publish_blacklist_markers(blacklist_points)
 
@@ -229,14 +230,11 @@ class MultiRobotExplorer(Node):
 
         if len(frontiers) == 0:
             self.get_logger().info("No more frontiers found")
-
             for robot, frame in self.robot_frames.items():
                 home = self.get_home_pose(msg, robot)
                 self.publish_goal_pose(home, msg, robot)
-
         else:
             self.get_logger().info(f"Found {len(frontiers)} frontiers")
-
             for robot, frame in self.robot_frames.items():
                 closest = self.get_closest_frontier(frontiers, msg, frame)
                 if closest:
@@ -300,66 +298,55 @@ class MultiRobotExplorer(Node):
         origin = map_msg.info.origin.position
 
         try:
-            transforms = {}
-            for name, frame in self.robot_frames.items():
-                transforms[name] = self.tf_buffer.lookup_transform(
-                'world', frame, rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.1))
-        except Exception as e:
-            self.get_logger().warn(f"TF lookup failed for robot_x/base_link to world: {e}")
-        
-        try:
-            map_transforms = {}
-            for name in self.robot_frames:
-                map_transforms[name] = self.tf_buffer.lookup_transform(
-                f'{name}/map', 'world', rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.1))
-        except Exception as e:
-            self.get_logger().warn(f"TF lookup failed for world to robot_x/map: {e}")
+            transforms = {name: self.tf_buffer.lookup_transform('world', frame, rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.1)) for name, frame in self.robot_frames.items()}
+            map_transforms = {name: self.tf_buffer.lookup_transform(f'{name}/map', 'world', rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.1)) for name in self.robot_frames}
+        except Exception:
+            return
 
         for robot, target in self.current_targets.items():
-            if not target:
-                continue
+            if not target: continue
             start_time = self.target_start_times[robot]
-            if not start_time or now - start_time < 10.0:
-                #self.get_logger().info(f"{robot} is not stuck: {now - start_time} seconds since last target")
-                continue
+            if not start_time or now - start_time < 10.0: continue
 
             try:
-                self.get_logger().info(f"{robot} is stuck for {now - start_time} seconds, checking reachability")
                 transform = transforms[robot]
-
-                rx = transform.transform.translation.x
-                ry = transform.transform.translation.y
-
+                rx, ry = transform.transform.translation.x, transform.transform.translation.y
                 y, x = target
-                tx = origin.x + (x + 0.5) * resolution
-                ty = origin.y + (y + 0.5) * resolution
+                tx, ty = origin.x + (x + 0.5) * resolution, origin.y + (y + 0.5) * resolution
+                dist = np.hypot(tx - rx, ty - ry)
+                
+                self.get_logger().warn(f"[{robot}] DEADLOCK DETECTED! (Distance: {dist:.1f}m). Initiating escape maneuver.")
+                
+                # 1. LOKÁLIS ÉS GLOBÁLIS COSTMAP TÖRLÉSE (Hogy a planner hajlandó legyen vonalat rajzolni)
+                client_local = self.create_client(ClearEntireCostmap, f'/{robot}/local_costmap/clear_entirely_local_costmap')
+                if client_local.wait_for_service(timeout_sec=0.5):
+                    client_local.call_async(ClearEntireCostmap.Request())
+                    
+                client_global = self.create_client(ClearEntireCostmap, f'/{robot}/global_costmap/clear_entirely_global_costmap')
+                if client_global.wait_for_service(timeout_sec=0.5):
+                    client_global.call_async(ClearEntireCostmap.Request())
 
-                if np.hypot(tx - rx, ty - ry) < 5.0:
-                    self.get_logger().warn(f"Blacklisting unreachable frontier for {robot} at ({y}, {x})")
-
+                # 2. Feketelista (ha túl közel van)
+                if dist < 5.0:
                     try:
-                        transform_to_local = map_transforms[robot]
-                        
-                        pose_world = PoseStamped()
-                        pose_world.header.frame_id = 'world'
-                        pose_world.pose.position.x = tx
-                        pose_world.pose.position.y = ty
-                        pose_world.pose.position.z = 0.0
-                        pose_world.pose.orientation.w = 1.0
+                        t_pose = do_transform_pose(PoseStamped(pose=Point(x=tx, y=ty, z=0.0)), map_transforms[robot])
+                        lx, ly = int((t_pose.position.x - origin.x) / resolution), int((t_pose.position.y - origin.y) / resolution)
+                        self.blacklists[robot][(ly, lx)] = now
+                    except Exception: pass
 
-                        transformed_pose = do_transform_pose(pose_world.pose, transform_to_local)
-
-                        lx = int((transformed_pose.position.x - origin.x) / resolution)
-                        ly = int((transformed_pose.position.y - origin.y) / resolution)
-
-                        self.blacklists[robot].add((ly, lx))
-                    except Exception as e:
-                        self.get_logger().warn(f"Failed to transform stuck frontier to {robot}/map: {e}")
-                    self.current_targets[robot] = None
-                    self.target_start_times[robot] = None
+                # 3. MENEKÜLÉS HAZA (És a marker kirajzolása!)
+                self.retreat_until[robot] = now + 15.0
+                home_cell = self.get_home_pose(map_msg, robot)
+                if home_cell:
+                    self.get_logger().info(f"[{robot}] Retreating to Home position for 15 seconds.")
+                    # Kirajzoljuk a nagy bogyót a Home pozícióra is, hogy LÁSSUK!
+                    self.publish_selected_frontier(home_cell, map_msg, robot) 
+                    self.publish_goal_pose(home_cell, map_msg, robot)
+                    self.current_targets[robot] = home_cell
+                    self.target_start_times[robot] = now
 
             except Exception as e:
-                self.get_logger().warn(f"TF transform failed for stuck check {robot}: {e}")
+                self.get_logger().warn(f"Stuck check failed: {e}")
 
     def publish_goal_pose(self, cell, map_msg, robot_name):
         pub = self.goal_pubs[robot_name]
@@ -409,7 +396,6 @@ class MultiRobotExplorer(Node):
 
         marker_array.markers.append(marker)
         self.marker_pub.publish(marker_array)
-
 
 def main(args=None):
     rclpy.init(args=args)
