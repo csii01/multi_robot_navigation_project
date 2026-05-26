@@ -353,10 +353,10 @@ def generate_launch_description():
     launchDescriptionObject.add_action(world_arg)
     launchDescriptionObject.add_action(world_launch)
     launchDescriptionObject.add_action(
-        TimerAction(period=8.0, actions=[robot_1_spawn_launch])
+        TimerAction(period=30.0, actions=[robot_1_spawn_launch])
     )
     launchDescriptionObject.add_action(
-        TimerAction(period=6.0, actions=[robot_2_spawn_launch])
+        TimerAction(period=33.0, actions=[robot_2_spawn_launch])
     )
     launchDescriptionObject.add_action(rviz_node)
     launchDescriptionObject.add_action(static_world_transform_1)
