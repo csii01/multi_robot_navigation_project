@@ -53,7 +53,7 @@ controller_server:
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.1
+      xy_goal_tolerance: 0.15
       yaw_goal_tolerance: 3.14
     # DWB parameters
     FollowPathDWB:
@@ -199,12 +199,12 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      robot_radius: 0.2
+      robot_radius: 0.1
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.70
+        inflation_radius: 0.10
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -289,9 +289,9 @@ smoother_server:
 behavior_server:
   ros__parameters:
     local_costmap_topic: local_costmap/costmap_raw
-    global_costmap_topic: lobal_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
     local_footprint_topic: local_costmap/published_footprint
-    global_footprint_topic: lobal_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
     cycle_frequency: 10.0
     behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
     spin:
@@ -414,4 +414,9 @@ docking_server:
       k_delta: 2.0
       v_linear_min: 0.15
       v_linear_max: 0.15
-
+lifecycle_manager_navigation:
+  ros__parameters:
+    use_sim_time: True
+    autostart: True
+    node_names: ['controller_server', 'planner_server', 'behavior_server', 'bt_navigator', 'waypoint_follower', 'smoother_server', 'velocity_smoother', 'collision_monitor']
+    bond_timeout: 10.0  # 10 másodpercre növelve a túlélés érdekében
