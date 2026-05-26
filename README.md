@@ -52,3 +52,34 @@ It is important to have distinct marker colors for each robot. Instead of the ha
 
 ### Blacklisting
 Originally a potentially unreachable goal position was only blacklisted, if the robot was closer to it, then 1 m. However, this made robots stuck, as there can be unreachable positions further away, so this threshold was increased to 5 m, which resolved the robot-is-stuck issue.
+
+## Solving the persistent robot deadlocks
+
+To enhance multi-robot exploration stability and prevent "deadlock" scenarios (where robots block each other in narrow corridors therefor the mapping stops), we implemented the following optimizations:
+
+### Navigational Parameter Tuning
+We tuned the `navigation_1.yaml` and `navigation_2.yaml` files to improve robot mobility:
+* **`footprint_clearing_enabled`**: Set to `True` to allow clearing of stale Lidar data.
+* **`inflation_radius`**: Reduced from `0.4m` to `0.25m` to create thinner safety zones.
+* **`cost_scaling_factor`**: Increased to `15.0` to encourage navigation closer to obstacles.
+* **`global_costmap` robot_radius**: Unified to `0.2m` to match the local costmap, preventing planning failures in tight corners.
+
+### Intelligent Deadlock Resolution (`explore_map_any_robots.py`)
+We integrated a robust state machine into the exploration logic to handle robot collisions and unreachable targets:
+
+1.  **Stuck Detection**: The node monitors robot progress. If a robot stays within 5 meters of a target for over 10 seconds, it is marked as "stuck".
+2.  **Costmap Clearing**: Upon detecting a stuck robot, the node automatically invokes the `nav2_msgs/srv/ClearEntireCostmap` service to reset both local and global costmaps.
+3.  **Retreat Maneuver**: The robot is commanded to navigate back to its `home_pose` for 15 seconds to vacate the corridor, allowing the other robot to pass.
+4.  **Temporal Blacklisting**: Targets that cannot be reached are added to a timestamped dictionary. They are ignored for 60 seconds, allowing the environment to change (i.e., the other robot to move away) before re-attempting.
+
+### Implementation Details
+The following dictionaries and functions were added to the `MultiRobotExplorer` class in `explore_map_any_robots.py`:
+
+* **Data Structures**: 
+    ```python
+    self.blacklists = {}          # Dictionary mapping (y, x) to timestamp
+    self.retreat_until = {}       # Dictionary mapping robot_name to escape expiration time
+    ```
+* **Key Functions**:
+    * `clean_expired_blacklists()`: Periodically removes entries from `self.blacklists` older than 60s.
+    * `check_and_blacklist_stuck_targets()`: The core logic that triggers the costmap clearing service, manages the retreat-to-home command, and updates the blacklist.
