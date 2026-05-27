@@ -194,6 +194,10 @@ footprint_clearing_enabled: true  # Dinamikus akadályok törlése
 inflation_radius: 0.4           # A biztonsági zóna szűkítése a jobb mozgékonyságért
 cost_scaling_factor: 7.0        # Meredekebb költség-gradiens a falak mentén
 
+---
+
+---
+
 ## 5. Összegzés
 
 A fenti kiegészítésekkel az `explore_map_any_robots.py` igyekeztünk az eddigi elakadásokat dinamikusan beavatkozással elkerülni. Így már a robotok kooperatív kikerülési és elakadási manővereket tudnak végrehajani és lekezelik a nem állandó akadályok (pl másik robot de akár emberk) jelenlézéz is ezzel javítva a sikeresebb és pontosabb  a térképezés végrehajtását.
