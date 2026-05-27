@@ -53,33 +53,122 @@ It is important to have distinct marker colors for each robot. Instead of the ha
 ### Blacklisting
 Originally a potentially unreachable goal position was only blacklisted, if the robot was closer to it, then 1 m. However, this made robots stuck, as there can be unreachable positions further away, so this threshold was increased to 5 m, which resolved the robot-is-stuck issue.
 
-## Solving the persistent robot deadlocks
 
-To enhance multi-robot exploration stability and prevent "deadlock" scenarios (where robots block each other in narrow corridors therefor the mapping stops), we implemented the following optimizations:
+# Multi-Robot Felderítő Rendszer Továbbfejlesztése és Holtpont-kezelése
 
-### Navigational Parameter Tuning
-We tuned the `navigation_1.yaml` and `navigation_2.yaml` files to improve robot mobility:
-* **`footprint_clearing_enabled`**: Set to `True` to allow clearing of stale Lidar data.
-* **`inflation_radius`**: Reduced from `0.4m` to `0.25m` to create thinner safety zones.
-* **`cost_scaling_factor`**: Increased to `15.0` to encourage navigation closer to obstacles.
-* **`global_costmap` robot_radius**: Unified to `0.2m` to match the local costmap, preventing planning failures in tight corners.
+A projekt során az eredeti `explore_map_any_robots.py` kód jelentős architekturális és logikai átalakításon esett át. Az eredeti implementáció (amely a Nav2 Action Servert használta és statikus feketelistákat alkalmazott) szűk folyosókon és dinamikus akadályok (pl. a másik robot) esetén végleges elakadásokhoz (deadlock) vezetett. 
 
-### Intelligent Deadlock Resolution (`explore_map_any_robots.py`)
-We integrated a robust state machine into the exploration logic to handle robot collisions and unreachable targets:
+Az alábbi dokumentáció részletezi a robusztusabb, hiba-ellenálló működés érdekében bevezetett módosításokat.
 
-1.  **Stuck Detection**: The node monitors robot progress. If a robot stays within 5 meters of a target for over 10 seconds, it is marked as "stuck".
-2.  **Costmap Clearing**: Upon detecting a stuck robot, the node automatically invokes the `nav2_msgs/srv/ClearEntireCostmap` service to reset both local and global costmaps.
-3.  **Retreat Maneuver**: The robot is commanded to navigate back to its `home_pose` for 15 seconds to vacate the corridor, allowing the other robot to pass.
-4.  **Temporal Blacklisting**: Targets that cannot be reached are added to a timestamped dictionary. They are ignored for 60 seconds, allowing the environment to change (i.e., the other robot to move away) before re-attempting.
+---
 
-### Implementation Details
-The following dictionaries and functions were added to the `MultiRobotExplorer` class in `explore_map_any_robots.py`:
+## Tartalomjegyzék
 
-* **Data Structures**: 
-    ```python
-    self.blacklists = {}          # Dictionary mapping (y, x) to timestamp
-    self.retreat_until = {}       # Dictionary mapping robot_name to escape expiration time
-    ```
-* **Key Functions**:
-    * `clean_expired_blacklists()`: Periodically removes entries from `self.blacklists` older than 60s.
-    * `check_and_blacklist_stuck_targets()`: The core logic that triggers the costmap clearing service, manages the retreat-to-home command, and updates the blacklist.
+1. [Könyvtárak és Kommunikációs Architektúra Cseréje](#1-könyvtárak-és-kommunikációs-architektúra-cseréje)
+2. [Új Adatstruktúrák az Állapotkezeléshez (State Management)](#2-új-adatstruktúrák-az-állapotkezeléshez-state-management)
+3. [Új és Módosított Függvények (A Maglogika)](#3-új-és-módosított-függvények-a-maglogika)
+   - [clean_expired_blacklists](#clean_expired_blacklists)
+   - [check_and_blacklist_stuck_targets](#check_and_blacklist_stuck_targets)
+   - [get_home_pose](#get_home_pose)
+   - [map_callback](#map_callback)
+   - [publish_selected_frontier & publish_blacklist_markers](#publish_selected_frontier-és-publish_blacklist_markers)
+4. [Összegzés](#4-összegzés)
+
+---
+
+## 1. Könyvtárak és Kommunikációs Architektúra Cseréje
+
+* **Új importok:** Bekerült a `ClearEntireCostmap` szerviz hívása. Erre a robotok "memóriájának" programozott tisztításához. Szintén bekerült a `hashlib` és a `colorsys` a dinamikus, robot-specifikus vizualizációhoz.
+
+```python
+from nav2_msgs.srv import ClearEntireCostmap
+import hashlib
+import colorsys
+
+```
+
+* **Action Server helyett Publisher:** Az eredeti kód `ActionClient`-et használt a `MapsToPose` híváshoz. Ezt lecseréltük egy közvetlen `Publisher`-re, amely a `/{robot_name}/goal_pose` topicra küldi a célokat.
+* Ez azért vol hasznos mert az Action Server szigorú állapotgépe hajlamos volt beragadni. A közvetlen topic-publikálás azonnali útvonal-újratervezést kényszerít ki a Nav2-ből, felgyorsítva a felderítést.
+
+
+
+## 2. Új Adatstruktúrák az Állapotkezeléshez (State Management)
+
+Az osztály `__init__` függvényében a statikus változókat lecseréltük dinamikus, időalapú szótárakra (Dictionaries), amelyek tárolják az állapotokat:
+
+```python
+# Célpontok kizárása időbélyeggel: {robot_name: {(y, x): timestamp}}
+self.blacklists = {}          
+
+# Menekülési fázis időzítője: {robot_name: timestamp}
+self.retreat_until = {}       
+
+```
+
+## 3. Új és Módosított Függvények
+
+### `clean_expired_blacklists`
+
+```python
+def clean_expired_blacklists(self):
+
+```
+
+* **Működése a következő:** Minden térképfrissítéskor végigiterál a `blacklists` szótáron, és törli azokat a bejegyzéseket, amelyek régebbiek 60 másodpercnél.
+* Így az eredeti kód véglegesen kizárt területeket. Az időbélyeges "felejtés" garantálja, hogy a dinamikus akadályok távozása után a rendszer újra megpróbálja feltérképezni a kimaradt részeket.
+
+### `check_and_blacklist_stuck_targets`
+
+```python
+def check_and_blacklist_stuck_targets(self, map_msg):
+
+```
+
+Ez a rendszer legfontosabb része a módosítsoknak, amely a holtpontok feloldásáért felel. Három lépésben avatkozik be, ha egy robot 10 másodpercig megakad (Deadlock):
+
+1. **Costmap Törlése:** Meghívja a `ClearEntireCostmap` szervizt a `local_costmap` és a `global_costmap` esetében is, törölve a fals akadályokat a memóriából.
+2. **Időleges Balcklist:** Ha a robot a cél 5 méteres körzetében ragadt be, a célpontot hozzáadja a `blacklists` szótárhoz a jelenlegi időbélyeggel.
+3. **Menekülő Manőver:** Beállítja a `retreat_until` időzítőt `aktuális_idő + 15 másodperc` értékre, és új célként a robot kezdőpontját (`home_pose`) adja meg.
+
+*Példa a Costmap törlési hívásra a függvényből:*
+
+```python
+client_local = self.create_client(ClearEntireCostmap, f'/{robot}/local_costmap/clear_entirely_local_costmap')
+if client_local.wait_for_service(timeout_sec=0.5):
+    client_local.call_async(ClearEntireCostmap.Request())
+
+```
+
+### `get_home_pose`
+
+```python
+def get_home_pose(self, map_msg, robot_name):
+
+```
+
+* **Működése:** Kiszámolja a robot saját `/map` koordináta-rendszerének origóját (0,0), és a `tf2` segítségével transzformálja azt a közös `world` keretbe.
+* Ez biztosítja a garantált visszavonulási pontot. Mivel a robotok a térkép különböző pontjairól indulnak, a "hazaküldésük" szétválasztja őket egy szűk folyosón történt találkozás esetén de természetesn nem mennek el tlejenen a kiinduló pozícióig csak 15 másodpercig mennek annak az irányábamajd új "úticélt" kapnak. Ez lehetőséet ad hogy új célokkal új útvonalakon próbálkozva addig próbáljanak elemnni egymás mellett amíg nem sikerül.
+
+### `map_callback`
+
+```python
+def map_callback(self, msg):
+
+```
+
+* Elsőként meghívja a tisztító és az elakadásellenőrző rutinokat.
+* De még mielőtt új felderítési célt adna egy robotnak, ellenőrzi a `retreat_until` szótárat. Ha a robot épp 15 másodperces visszavonulásban van, **nem kap új célt** (`continue`), így a Nav2 zavartalanul végrehajthatja a kikerülési manővert.
+
+### `publish_selected_frontier` és `publish_blacklist_markers`
+
+* Ez a vizuális diagnosztikai eszközök (Markers) publikálása az RViz számára.
+* Ezek a markerek teszik lehetővé számunkra, fejlesztőknek, hogy valós időben lássuk a szoftver döntéseit. A kiválasztott célpontok a robot saját egyedi színével nagy gömbként, míg a tiltólistás pontok kis piros gömbökként jelennek meg.
+
+---
+
+## 4. Összegzés
+
+A fenti kiegészítésekkel az `explore_map_any_robots.py` igyekeztünk az eddigi elakadásokat dinamikusan beavatkozással elkerülni. Így már a robotok kooperatív kikerülési és elakadási manővereket tudnak végrehajani és lekezelik a nem állandó akadályok (pl másik robot de akár emberk) jelenlézéz is ezzel javítva a sikeresebb és pontosabb  a térképezés végrehajtását.
+```
+
+```
