@@ -54,9 +54,9 @@ It is important to have distinct marker colors for each robot. Instead of the ha
 Originally a potentially unreachable goal position was only blacklisted, if the robot was closer to it, then 1 m. However, this made robots stuck, as there can be unreachable positions further away, so this threshold was increased to 5 m, which resolved the robot-is-stuck issue.
 
 
-# Multi-Robot Felderítő Rendszer Továbbfejlesztése és Holtpont-kezelése
+# Az explore_map_any_robots.py Továbbfejlesztése és Holtpont-kezelése
 
-A projekt során az eredeti `explore_map_any_robots.py` kód jelentős architekturális és logikai átalakításon esett át. Az eredeti implementáció (amely a Nav2 Action Servert használta és statikus feketelistákat alkalmazott) szűk folyosókon és dinamikus akadályok (pl. a másik robot) esetén végleges elakadásokhoz (deadlock) vezetett. 
+A projekt során az eredeti `explore_map_any_robots.py` kód jelentős architekturális és logikai átalakításon esett át. Az eredeti implementáció (amely a Nav2 Action Servert használta és statikus feketelistákat alkalmazott) szűk folyosókon és dinamikus akadályok (pl. a másik robot) esetén elakadást idézett elő (deadlock). Valamint az eredeti alapkódban volt egy hiba ami a sarkokba való beragadáshoz vezetett. 
 
 Az alábbi dokumentáció részletezi a robusztusabb, hiba-ellenálló működés érdekében bevezetett módosításokat.
 
@@ -65,14 +65,15 @@ Az alábbi dokumentáció részletezi a robusztusabb, hiba-ellenálló működé
 ## Tartalomjegyzék
 
 1. [Könyvtárak és Kommunikációs Architektúra Cseréje](#1-könyvtárak-és-kommunikációs-architektúra-cseréje)
-2. [Új Adatstruktúrák az Állapotkezeléshez (State Management)](#2-új-adatstruktúrák-az-állapotkezeléshez-state-management)
-3. [Új és Módosított Függvények (A Maglogika)](#3-új-és-módosított-függvények-a-maglogika)
+2. [Új Adatstruktúrák az Állapotkezeléshez (State Management)](#2-új-adatstruktúrák-az-állapotkezeléshez)
+3. [Új és Módosított Függvények (A Maglogika)](#3-új-és-módosított-függvények)
    - [clean_expired_blacklists](#clean_expired_blacklists)
    - [check_and_blacklist_stuck_targets](#check_and_blacklist_stuck_targets)
    - [get_home_pose](#get_home_pose)
    - [map_callback](#map_callback)
    - [publish_selected_frontier & publish_blacklist_markers](#publish_selected_frontier-és-publish_blacklist_markers)
-4. [Összegzés](#4-összegzés)
+4. [Navigációs Paraméterek Javítása](#4-navigációs-paraméterek-javítása)
+5. [Összegzés](#5-összegzés)
 
 ---
 
@@ -92,7 +93,7 @@ import colorsys
 
 
 
-## 2. Új Adatstruktúrák az Állapotkezeléshez (State Management)
+## 2. Új Adatstruktúrák az Állapotkezeléshez
 
 Az osztály `__init__` függvényében a statikus változókat lecseréltük dinamikus, időalapú szótárakra (Dictionaries), amelyek tárolják az állapotokat:
 
@@ -166,7 +167,34 @@ def map_callback(self, msg):
 
 ---
 
-## 4. Összegzés
+## 4. Navigációs Paraméterek Javítása
+
+A robotok sarokban történő beragadásának egyik okaként azonosítottuk, hogy a `global_costmap` és a `local_costmap` konfigurációjában inkonzisztencia volt, amely a `navigation_1.yaml` és `navigation_2.yaml` fájlokban egyaránt jelentkezett.
+
+### A probléma gyökere: Nem Egyező Robot-rádiusz
+Eredetileg a robot-rádiusz (`robot_radius`) paraméterek eltértek a két réteg között:
+* **Local Costmap:** `0.2m` (A robot itt "kicsinek" érezte magát, ezért bátran bement a szűk sarkokba.)
+* **Global Costmap:** `0.4m` (A globális tervező viszont "nagynak" látta a robotot, és a sarokba érve azt érzékelte, hogy a robot félig belelóg a falba.)
+
+**Eredmény:** Amikor a robot beállt a sarokba, a globális útvonaltervező (Global Planner) ütközést észlelt a `0.4m`-es sugár miatt, és **megtagadta a további útvonaltervezést**. A robot így véglegesen beragadt a sarokban, mivel nem tudott kijelölni utat a biztonságos területre.
+
+### Alkalmazott javítások
+A konfigurációs fájlokban (`navigation_1.yaml`, `navigation_2.yaml`) az alábbi egységesítést és optimalizálást hajtottuk végre:
+
+```yaml
+# Robot-rádiusz egységesítése a tervezési hibák elkerüléséhez
+local_costmap:
+  robot_radius: 0.2
+  
+global_costmap:
+  robot_radius: 0.2  # Módosítva 0.4-ről, hogy konzisztens legyen
+
+# Mozgási optimalizációk
+footprint_clearing_enabled: true  # Dinamikus akadályok törlése
+inflation_radius: 0.4           # A biztonsági zóna szűkítése a jobb mozgékonyságért
+cost_scaling_factor: 7.0        # Meredekebb költség-gradiens a falak mentén
+
+## 5. Összegzés
 
 A fenti kiegészítésekkel az `explore_map_any_robots.py` igyekeztünk az eddigi elakadásokat dinamikusan beavatkozással elkerülni. Így már a robotok kooperatív kikerülési és elakadási manővereket tudnak végrehajani és lekezelik a nem állandó akadályok (pl másik robot de akár emberk) jelenlézéz is ezzel javítva a sikeresebb és pontosabb  a térképezés végrehajtását.
 ```
