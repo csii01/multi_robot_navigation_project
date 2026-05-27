@@ -40,6 +40,7 @@ class MultiRobotExplorer(Node):
         self.current_targets = {}
         self.target_start_times = {}
         self.blacklists = {}  # EREDETI: Ez a dict tárolja a feketelistát
+        self.retreat_until = {}
         self.robot_marker_colors = {}
 
         self.robot_scan_period_sec = 10.0
@@ -64,6 +65,7 @@ class MultiRobotExplorer(Node):
                 # MÓDOSÍTÁS 1: Halmaz (set) helyett egy szótárt (dict) hozunk létre a robotnak.
                 # Ebben fogjuk tárolni a (y, x) koordinátákat és a hozzájuk tartozó időbélyeget.
                 self.blacklists[name] = {}  
+                self.retreat_until[name] = 0.0
 
                 color_rgba = ColorRGBA()
                 hash_object = hashlib.sha256(name.encode('utf-8'))
