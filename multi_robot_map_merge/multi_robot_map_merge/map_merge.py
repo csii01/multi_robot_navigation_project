@@ -28,7 +28,7 @@ class MultiRobotMapMerger(Node):
         self.declare_parameter('map_publish_frequency', 1.0)
         self.declare_parameter('visualize', True)
         self.declare_parameter('match_confidence_threshold', 0.6)
-        self.declare_parameter('min_map_size', 60000)
+        self.declare_parameter('min_map_size', 10000)
 
         self.publish_frequency = self.get_parameter('tf_publish_frequency').get_parameter_value().double_value
         self.map_publish_frequency = self.get_parameter('map_publish_frequency').get_parameter_value().double_value
